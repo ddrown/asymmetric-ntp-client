@@ -26,3 +26,5 @@ TODO:
  * Figure out a way to deal with static shifts in latency that would come from route changes (perhaps by monitoring min_rtt)
  * Evaluate using response latency + rtt-based scaling as a second data point
  * Fix 64bit mode
+
+More info: http://blog.dan.drown.org/stratum-2-ntp-over-a-cable-modem/
