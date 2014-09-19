@@ -40,7 +40,7 @@ Options:
 OPTIONS
 }
 
-$result = GetOptions (
+my $result = GetOptions (
     "hostname=s" => \$config{hostname},
     "ntp_shmid=s" => \$config{ntp_shmid},
     "dns_lookup_interval=i" => \$config{dns_lookup_interval},
@@ -52,7 +52,7 @@ $result = GetOptions (
 $config{dns_lookup_interval} = $config{dns_lookup_interval} * 60;
 $config{static_offset} = $config{static_offset} / 1000000;
 
-if(not defined $config{hostname} or $config{help}) {
+if(not defined $config{hostname} or $config{help} or not $result) {
   usage();
   exit(1);
 }
