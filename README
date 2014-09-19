@@ -9,3 +9,9 @@ This is currently limited to IPv6 only.
 Requires the perl modules Socket6, IO::Socket::INET6, and Time::HiRes
 
 This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
+
+TODO:
+ * Currently setup assuming request latency is less variable than response latency, make this configurable.  This would mean swapping the percentile filters
+ * Automatically detecting/calculating max_rtt would be nice
+ * Figure out a way to deal with static shifts in latency that would come from route changes (perhaps by monitoring min_rtt)
+ * Evaluate using response latency + rtt-based scaling as a second data point
