@@ -1,0 +1,190 @@
+#!/usr/bin/perl
+
+# This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
+
+use strict;
+use FindBin;
+use lib "$FindBin::Bin";
+use NTP::Client;
+use IPC::SysV qw(IPC_PRIVATE IPC_RMID S_IRUSR S_IWUSR);
+use Time::HiRes qw(gettimeofday);
+use Getopt::Long;
+
+my(%config) = (
+  hostname => undef,
+  ntp_shmid => 0x4e545030,
+  dns_lookup_interval => 60, # in minutes
+  max_rtt => 0.037, # in seconds, recomendation: 2x min rtt
+  static_offset => 0, # in seconds
+  help => undef, # show help
+  );
+
+sub usage {
+  print <<OPTIONS
+$0: measure ntp offsets, filter them, and submit them to ntpd via the shared memory interface
+
+WARNING: do not run this against any NTP server you do not personally run.  It
+sends one packet per second, which will annoy any public NTP server operator,
+and likely get your client banned.
+
+Options:
+ --hostname=x............................ the hostname of the ntp server to poll (required)
+ --ntp_shmid=x...(defaults to 0x4e545030) the ID of the shared memory from ntpd (see ipcs -m)
+ --dns_lookup_interval=x (defaults to 60) the number of minutes between dns lookups
+ --max_rtt=x..........(defaults to 0.037) the maximum number of seconds to wait for a response.
+                                          recommended: 2* minimum_round_trip_time
+ --static_offset=x........(defaults to 0) the number of microseconds it takes the request to reach the server
+					  you'll have to measure this independently. 
+					  A rough estimate would be rtt/2 - 4ms
+ --help.................................. This help screen
+OPTIONS
+}
+
+$result = GetOptions (
+    "hostname=s" => \$config{hostname},
+    "ntp_shmid=s" => \$config{ntp_shmid},
+    "dns_lookup_interval=i" => \$config{dns_lookup_interval},
+    "max_rtt=i" => \$config{max_rtt},
+    "static_offset=i" => \$config{static_offset},
+    "help"  => \$config{help}
+    );  # flag
+
+$config{dns_lookup_interval} = $config{dns_lookup_interval} * 60;
+$config{static_offset} = $config{static_offset} / 1000000;
+
+if(not defined $config{hostname} or $config{help}) {
+  usage();
+  exit(1);
+}
+
+our(%stats, @all_response, @all_rtt);
+
+sub percentile {
+  my($array,$pct) = @_;
+
+  my @temp = sort { $a <=> $b } @$array;
+  my $items = int(@temp * $pct) - 1;
+  if($items > @temp) {
+    $items = @temp;
+  } elsif($items < 0) {
+    $items = 0;
+  }
+  return $temp[$items];
+}
+
+sub filtered_percentile {
+  my($array,$max,$min,$pct) = @_;
+
+  my(@items);
+  foreach my $item (@$array) {
+    if($item >= $min and $item <= $max) {
+      push(@items, $item);
+    }
+  }
+
+  return(percentile(\@items, $pct), scalar(@items));
+}
+
+sub send_time {
+  my($shmid,$offset) = @_;
+
+  my $local = [gettimeofday];
+
+  my $remote_s = $local->[0] + $local->[1]/1000000 + $offset;
+  my $remote_us = ($remote_s - int($remote_s)) * 1000000;
+  $remote_us = int($remote_us);
+  $remote_s = int($remote_s);
+
+  my $nsamples = 0;
+  my $valid = 1;
+  my $precision = -13; # 2^-13 = 122 microseconds ~ 125us
+  my $leap = 0;
+  my $count = 0;
+  my $mode = 0;
+
+  my $format = "ll". "ll" . "ll" . "llll" . "l" . "lllllllll";
+  my $message = pack( $format, 
+                  $mode, $count,
+                  $remote_s, $remote_us,
+                  $local->[0], $local->[1],
+                  $leap,
+                  $precision, $nsamples, $valid,
+                  0,0,0,0,0,0,0,0,0,0);
+
+  my $len = length($message);
+  die "wrong message length" unless($len == 80);
+  shmwrite($shmid, $message, 0, $len) || die("$!");  
+}
+
+sub process_responses {
+  my($responses,$shmid) = @_;
+
+  if(@$responses == 19) {
+    my(@times);
+    foreach my $response (@$responses) {
+      push(@times, $response->request());
+      push(@all_rtt, $response->rtt());
+    }
+    push(@all_response, @times);
+    if(@all_response > 200) {
+      splice(@all_response, -1, 200);
+      splice(@all_rtt, -1, 200);
+    }
+    my $pct_90 = percentile(\@all_response, 0.90);
+    my $pct_03 = percentile(\@all_response, 0.03);
+    my($filtered_mode,$item_count) = filtered_percentile(\@times, $pct_90, $pct_03, 0.5);
+    if($item_count < 10) { # start over if we're using less than 1/2 of the samples
+      @all_response = @times;
+      $pct_90 = percentile(\@all_response, 0.90);
+      $pct_03 = percentile(\@all_response, 0.03);
+      ($filtered_mode,$item_count) = filtered_percentile(\@times, $pct_90, $pct_03, 0.5);
+      $stats{"reset"}++;
+    }
+    my $rtt_90 = percentile(\@all_rtt, 0.90);
+    my $rtt_10 = percentile(\@all_rtt, 0.10);
+    my $offset = $filtered_mode - $config{static_offset};
+    printf("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f %d S %d %d %d %d %d %d\n", time(), $pct_90, $pct_03, ($pct_90-$pct_03), $offset, $rtt_90, $rtt_10, $item_count, $stats{lookups}, $stats{requests}, $stats{responses}, $stats{over_rtt}, $stats{"reset"}, $stats{error});
+    send_time($shmid,$offset);
+    @$responses = ();
+  }
+}
+
+my $shmid = shmget($config{ntp_shmid}, 80, S_IRUSR | S_IWUSR);
+die "shmget: $!" if ( $shmid < 0 );
+
+my $client = NTP::Client->new();
+
+open(LOG,">>ntp-client.log");
+
+my(@responses);
+my $last_lookup = 0;
+while(1) {
+  if($last_lookup < time() - $config{dns_lookup_interval}) {
+    $client->lookup($config{hostname});
+    $stats{lookups}++;
+    $last_lookup = time();
+  }
+  eval {
+    $stats{requests}++;
+    my $response = $client->get_ntp_response();
+    if($response->stratum() != 1) {
+      die("stratum != 1 (".$response->stratum().")");
+    }
+    if(abs($response->request()) > 0.2) {
+      printf LOG ("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f\n", time(), $response->rtt(), $response->{"Local Transmit Time"}, $response->{"Remote Recv Time"}, $response->{"Remote Transmit Time"}, $response->{"Local Recv Time"}, $response->{"sent2"});
+    }
+    $stats{responses}++;
+    if($response->rtt() < $config{max_rtt}) {
+      push(@responses, $response);
+      process_responses(\@responses,$shmid);
+    } else {
+      $stats{over_rtt}++;
+    }
+  };
+  if($@) {
+    print "ERROR: ",$@;
+    $stats{error}++;
+    sleep(10);
+  }
+  sleep(1);
+}
