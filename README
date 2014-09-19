@@ -6,12 +6,23 @@ This program will exit if it gets a non-stratum 1 answer
 
 This is currently limited to IPv6 only.
 
+The ntp shm format changes for 64-bit vs 32-bit hosts, this is currently limited to 32bit
+
 Requires the perl modules Socket6, IO::Socket::INET6, and Time::HiRes
 
 This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
+
+ntpd.conf:
+server 127.127.28.x minpoll 6 maxpoll 6
+fudge 127.127.28.x time1 0.000 stratum 1
+
+For x=0 or x=1, this program will need to run as root.  For x=2 or x=3, the
+shared memory permission is world writable (consider the security problems
+before doing that).  The ntp_shmid needs to be passed as an option for x!=0
 
 TODO:
  * Currently setup assuming request latency is less variable than response latency, make this configurable.  This would mean swapping the percentile filters
  * Automatically detecting/calculating max_rtt would be nice
  * Figure out a way to deal with static shifts in latency that would come from route changes (perhaps by monitoring min_rtt)
  * Evaluate using response latency + rtt-based scaling as a second data point
+ * Fix 64bit mode
