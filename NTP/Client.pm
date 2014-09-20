@@ -5,10 +5,9 @@ package NTP::Client;
 # This library is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
 
 use strict;
-use Socket;
-use Socket6;
+use Socket qw(AF_INET AF_INET6 SOCK_DGRAM unpack_sockaddr_in);
+use Socket6 qw(getaddrinfo unpack_sockaddr_in6 inet_ntop);
 use Time::HiRes qw(gettimeofday tv_interval);
-use IO::Socket::INET6;
 use NTP::Response;
 use NTP::Common qw(NTP_ADJ frac2bin);
 
@@ -60,8 +59,13 @@ sub get_ntp_response {
     $recv = [gettimeofday];
     alarm(0);
 
-    my($actual_port,$actual_ip) = unpack_sockaddr_in6($from);
-    $actual_ip = inet_ntop(AF_INET6,$actual_ip);
+    my($actual_port,$actual_ip);
+    if($self->{family} == AF_INET6) {
+      ($actual_port,$actual_ip) = unpack_sockaddr_in6($from);
+    } else {
+      ($actual_port,$actual_ip) = unpack_sockaddr_in($from);
+    }
+    $actual_ip = inet_ntop($self->{family},$actual_ip);
     if($actual_ip ne $self->{expected_ip}) {
       die("expected $self->{expected_ip} got $actual_ip");
     }
@@ -81,22 +85,40 @@ sub get_ntp_response {
 }
 
 sub lookup {
-  my($self,$hostname) = @_;
+  my($self,$hostname,$force_proto) = @_;
 
-  my @results = getaddrinfo($hostname, "ntp", AF_INET6, SOCK_DGRAM, "udp");
+  if($force_proto eq "inet6") {
+    $force_proto = AF_INET6;
+  } elsif($force_proto eq "inet") {
+    $force_proto = AF_INET;
+  } else {
+    $force_proto = 0;
+  }
+
+  my @results = getaddrinfo($hostname, "ntp", $force_proto, SOCK_DGRAM, "udp");
   if(@results == 1) {
     die("".$results[0]);
   }
-  if($results[0] != AF_INET6) {
-    die("type $results[0] != ".AF_INET6 );
+
+  if(defined($self->{"socket"}) and $self->{family} != $results[0]) { # family changed
+    warn("address family changed from $self->{family} to $results[0]\n");
+
+    close($self->{"socket"});
+    $self->{"socket"} = undef;
   }
+
   $self->{family} = $results[0];
   $self->{type} = $results[1];
   $self->{protocol} = $results[2];
   $self->{addr} = $results[3];
 
-  my($expected_port,$expected_ip) = unpack_sockaddr_in6($self->{addr});
-  $self->{expected_ip} = inet_ntop(AF_INET6,$expected_ip);
+  my($expected_port,$expected_ip);
+  if($self->{family} == AF_INET6) {
+    ($expected_port,$expected_ip) = unpack_sockaddr_in6($self->{addr});
+  } else {
+    ($expected_port,$expected_ip) = unpack_sockaddr_in($self->{addr});
+  }
+  $self->{expected_ip} = inet_ntop($self->{family},$expected_ip);
 
   if(not defined $self->{"socket"}) {
     socket($self->{"socket"}, $self->{family}, $self->{type}, $self->{protocol});

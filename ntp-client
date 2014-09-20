@@ -15,8 +15,12 @@ my(%config) = (
   ntp_shmid => 0x4e545030,
   dns_lookup_interval => 60, # in minutes
   max_rtt => 0.037, # in seconds, recomendation: 2x min rtt
-  static_offset => 0, # in seconds
+  static_offset => 0, # in microseconds
   help => undef, # show help
+  skip_ntpd => undef, # don't send the data to ntpd
+  expected_stratum => 1, # the clock stratum to expect
+  response => undef, # which direction is the cable modem downstream?
+  force_proto => 0, # which protocol to force: IPv4, IPv6, or auto
   );
 
 sub usage {
@@ -33,10 +37,17 @@ Options:
  --dns_lookup_interval=x (defaults to 60) the number of minutes between dns lookups
  --max_rtt=x..........(defaults to 0.037) the maximum number of seconds to wait for a response.
                                           recommended: 2* minimum_round_trip_time
- --static_offset=x........(defaults to 0) the number of microseconds it takes the request to reach the server
-					  you'll have to measure this independently. 
+ --static_offset=x........(defaults to 0) the number of microseconds it takes the request to reach
+                                          the server.  You'll have to measure this independently. 
 					  A rough estimate would be rtt/2 - 4ms
+ --skip-ntpd............................. Don't send the data to ntpd (for debugging)
  --help.................................. This help screen
+ --expected-stratum=x.....(defaults to 1) The expected stratum of the remote clock. Answers not 
+                                          matching this will be ignored
+ --response.............................. Use the NTP response time difference. Use this when the
+                                          NTP client is downstream of the cable modem
+ --ipv6.................................. Force IPv6 (default: auto)
+ --ipv4.................................. Force IPv4 (default: auto)
 OPTIONS
 }
 
@@ -44,9 +55,14 @@ my $result = GetOptions (
     "hostname=s" => \$config{hostname},
     "ntp_shmid=s" => \$config{ntp_shmid},
     "dns_lookup_interval=i" => \$config{dns_lookup_interval},
-    "max_rtt=i" => \$config{max_rtt},
+    "max_rtt=f" => \$config{max_rtt},
     "static_offset=i" => \$config{static_offset},
-    "help"  => \$config{help}
+    "help"  => \$config{help},
+    "skip-ntpd" => \$config{skip_ntpd},
+    "expected-stratum=i" => \$config{expected_stratum},
+    "response" => \$config{response},
+    "ipv6" => sub { $config{force_proto} = "inet6"; },
+    "ipv4" => sub { $config{force_proto} = "inet"; },
     );  # flag
 
 $config{dns_lookup_interval} = $config{dns_lookup_interval} * 60;
@@ -122,7 +138,11 @@ sub process_responses {
   if(@$responses == 19) {
     my(@times);
     foreach my $response (@$responses) {
-      push(@times, $response->request());
+      if($config{response}) {
+        push(@times, $response->response());
+      } else {
+        push(@times, $response->request());
+      }
       push(@all_rtt, $response->rtt());
     }
     push(@all_response, @times);
@@ -144,13 +164,18 @@ sub process_responses {
     my $rtt_10 = percentile(\@all_rtt, 0.10);
     my $offset = $filtered_mode - $config{static_offset};
     printf("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f %d S %d %d %d %d %d %d\n", time(), $pct_90, $pct_03, ($pct_90-$pct_03), $offset, $rtt_90, $rtt_10, $item_count, $stats{lookups}, $stats{requests}, $stats{responses}, $stats{over_rtt}, $stats{"reset"}, $stats{error});
-    send_time($shmid,$offset);
+    if(not $config{skip_ntpd}) {
+      send_time($shmid,$offset);
+    }
     @$responses = ();
   }
 }
 
-my $shmid = shmget($config{ntp_shmid}, 80, S_IRUSR | S_IWUSR);
-die "shmget: $!" if ( $shmid < 0 );
+my $shmid;
+if(not $config{skip_ntpd}) {
+  $shmid = shmget($config{ntp_shmid}, 80, S_IRUSR | S_IWUSR);
+  die "shmget: $!" if ( $shmid < 0 );
+}
 
 my $client = NTP::Client->new();
 
@@ -160,17 +185,23 @@ my(@responses);
 my $last_lookup = 0;
 while(1) {
   if($last_lookup < time() - $config{dns_lookup_interval}) {
-    $client->lookup($config{hostname});
+    $client->lookup($config{hostname},$config{force_proto});
     $stats{lookups}++;
     $last_lookup = time();
   }
   eval {
     $stats{requests}++;
     my $response = $client->get_ntp_response();
-    if($response->stratum() != 1) {
-      die("stratum != 1 (".$response->stratum().")");
+    if($response->stratum() != $config{expected_stratum}) {
+      die("stratum ".$response->stratum()." != ".$config{expected_stratum});
     }
-    if(abs($response->request()) > 0.2) {
+    my $one_way_difference;
+    if($config{response}) {
+      $one_way_difference = $response->response();
+    } else {
+      $one_way_difference = $response->request();
+    }
+    if(abs($one_way_difference) > 0.2) { # log all time differences over 200ms
       printf LOG ("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f\n", time(), $response->rtt(), $response->{"Local Transmit Time"}, $response->{"Remote Recv Time"}, $response->{"Remote Transmit Time"}, $response->{"Local Recv Time"}, $response->{"sent2"});
     }
     $stats{responses}++;
