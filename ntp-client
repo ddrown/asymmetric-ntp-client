@@ -50,6 +50,7 @@ Options:
                                           NTP client is downstream of the cable modem
  --ipv6.................................. Force IPv6 (default: auto)
  --ipv4.................................. Force IPv4 (default: auto)
+ --bits=x................(defaults to 32) Which platform ntpd is running under: 32bit or 64bit
 OPTIONS
 }
 
