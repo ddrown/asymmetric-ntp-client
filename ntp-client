@@ -6,13 +6,14 @@ use strict;
 use FindBin;
 use lib "$FindBin::Bin";
 use NTP::Client;
-use IPC::SysV qw(IPC_PRIVATE IPC_RMID S_IRUSR S_IWUSR);
 use Time::HiRes qw(gettimeofday);
 use Getopt::Long;
+use NTP::ntpd;
+use NTP::ntpd::64;
 
 my(%config) = (
   hostname => undef,
-  ntp_shmid => 0x4e545030,
+  ntp_shmid => undef,
   dns_lookup_interval => 60, # in minutes
   max_rtt => 0.037, # in seconds, recomendation: 2x min rtt
   static_offset => 0, # in microseconds
@@ -21,6 +22,7 @@ my(%config) = (
   expected_stratum => 1, # the clock stratum to expect
   response => undef, # which direction is the cable modem downstream?
   force_proto => 0, # which protocol to force: IPv4, IPv6, or auto
+  bits => 32, # 32 or 64 bits TODO: autodetect
   );
 
 sub usage {
@@ -63,10 +65,16 @@ my $result = GetOptions (
     "response" => \$config{response},
     "ipv6" => sub { $config{force_proto} = "inet6"; },
     "ipv4" => sub { $config{force_proto} = "inet"; },
+    "bits=i" => \$config{bits},
     );  # flag
 
 $config{dns_lookup_interval} = $config{dns_lookup_interval} * 60;
 $config{static_offset} = $config{static_offset} / 1000000;
+if(not defined $config{ntp_shmid}) {
+  $config{ntp_shmid} = 0x4e545030;
+} else {
+  $config{ntp_shmid} = hex($config{ntp_shmid});
+}
 
 if(not defined $config{hostname} or $config{help} or not $result) {
   usage();
@@ -101,8 +109,8 @@ sub filtered_percentile {
   return(percentile(\@items, $pct), scalar(@items));
 }
 
-sub send_time {
-  my($shmid,$offset) = @_;
+sub send_offset {
+  my($ntpd,$offset) = @_;
 
   my $local = [gettimeofday];
 
@@ -111,35 +119,17 @@ sub send_time {
   $remote_us = int($remote_us);
   $remote_s = int($remote_s);
 
-  my $nsamples = 0;
-  my $valid = 1;
-  my $precision = -13; # 2^-13 = 122 microseconds ~ 125us
-  my $leap = 0;
-  my $count = 0;
-  my $mode = 0;
-
-  my $format = "ll". "ll" . "ll" . "llll" . "l" . "lllllllll";
-  my $message = pack( $format, 
-                  $mode, $count,
-                  $remote_s, $remote_us,
-                  $local->[0], $local->[1],
-                  $leap,
-                  $precision, $nsamples, $valid,
-                  0,0,0,0,0,0,0,0,0,0);
-
-  my $len = length($message);
-  die "wrong message length" unless($len == 80);
-  shmwrite($shmid, $message, 0, $len) || die("$!");  
+  $ntpd->send_time($local, [$remote_s,$remote_us]);
 }
 
 sub process_responses {
-  my($responses,$shmid) = @_;
+  my($responses,$ntpd) = @_;
 
   if(@$responses == 19) {
     my(@times);
     foreach my $response (@$responses) {
       if($config{response}) {
-        push(@times, $response->response());
+        push(@times, -1 * $response->response());
       } else {
         push(@times, $response->request());
       }
@@ -162,24 +152,34 @@ sub process_responses {
     }
     my $rtt_90 = percentile(\@all_rtt, 0.90);
     my $rtt_10 = percentile(\@all_rtt, 0.10);
-    my $offset = $filtered_mode - $config{static_offset};
+    my $offset = $filtered_mode;
+    if($config{response}) {
+      $offset += $config{static_offset};
+    } else {
+      $offset -= $config{static_offset};
+    }
     printf("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f %d S %d %d %d %d %d %d\n", time(), $pct_90, $pct_03, ($pct_90-$pct_03), $offset, $rtt_90, $rtt_10, $item_count, $stats{lookups}, $stats{requests}, $stats{responses}, $stats{over_rtt}, $stats{"reset"}, $stats{error});
     if(not $config{skip_ntpd}) {
-      send_time($shmid,$offset);
+      send_offset($ntpd,$offset);
     }
     @$responses = ();
   }
 }
 
-my $shmid;
+my $ntpd;
 if(not $config{skip_ntpd}) {
-  $shmid = shmget($config{ntp_shmid}, 80, S_IRUSR | S_IWUSR);
-  die "shmget: $!" if ( $shmid < 0 );
+  if($config{bits} == 64) {
+    $ntpd = NTP::ntpd::64->new(shmkey => $config{ntp_shmid});
+  } else {
+    $ntpd = NTP::ntpd->new(shmkey => $config{ntp_shmid});
+  }
 }
 
 my $client = NTP::Client->new();
 
 open(LOG,">>ntp-client.log");
+
+$| = 1;
 
 my(@responses);
 my $last_lookup = 0;
@@ -207,7 +207,7 @@ while(1) {
     $stats{responses}++;
     if($response->rtt() < $config{max_rtt}) {
       push(@responses, $response);
-      process_responses(\@responses,$shmid);
+      process_responses(\@responses,$ntpd);
     } else {
       $stats{over_rtt}++;
     }
