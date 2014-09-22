@@ -2,8 +2,6 @@ WARNING: do not run this against any NTP server you do not personally run.  It
 sends one packet per second, which will annoy any public NTP server operator,
 and likely get your client banned.
 
-The ntp shm format changes for 64-bit vs 32-bit hosts, this is currently limited to 32bit
-
 Requires the perl modules Socket6 and Time::HiRes
 
 This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
@@ -17,10 +15,8 @@ shared memory permission is world writable (consider the security problems
 before doing that).  The ntp_shmid needs to be passed as an option for x!=0
 
 TODO:
- * Currently setup assuming request latency is less variable than response latency, make this configurable.  This would mean swapping the percentile filters
  * Automatically detecting/calculating max_rtt would be nice
  * Figure out a way to deal with static shifts in latency that would come from route changes (perhaps by monitoring min_rtt)
- * Evaluate using response latency + rtt-based scaling as a second data point
- * Fix 64bit mode
+ * Evaluate using the high jitter direction + rtt-based scaling as a second data point
 
 More info: http://blog.dan.drown.org/stratum-2-ntp-over-a-cable-modem/
