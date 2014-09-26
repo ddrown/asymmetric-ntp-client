@@ -203,7 +203,10 @@ while(1) {
       $one_way_difference = $response->request();
     }
     if(abs($one_way_difference) > 0.2) { # log all time differences over 200ms
-      printf LOG ("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f\n", time(), $response->rtt(), $response->{"Local Transmit Time"}, $response->{"Remote Recv Time"}, $response->{"Remote Transmit Time"}, $response->{"Local Recv Time"}, $response->{"sent2"});
+      printf LOG ("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f\n", time(), $response->rtt(), 
+          $response->local_transmit_time(), $response->remote_recv_time(), 
+          $response->remote_transmit_time(), $response->local_recv_time(),
+          $response->local_transmit_time_after_processing());
     }
     $stats{responses}++;
     if($response->rtt() < $config{max_rtt}) {

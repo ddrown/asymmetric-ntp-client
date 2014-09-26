@@ -36,6 +36,31 @@ sub stratum {
   return $self->{"stratum"};
 }
 
+sub local_transmit_time {
+  my($self) = @_;
+  return $self->{"Local Transmit Time"}[0] + $self->{"Local Transmit Time"}[1] / 1000000;
+}
+
+sub local_transmit_time_after_processing {
+  my($self) = @_;
+  return $self->{"sent2"}[0] + $self->{"sent2"}[1] / 1000000;
+}
+
+sub local_recv_time {
+  my($self) = @_;
+  return $self->{"Local Recv Time"}[0] + $self->{"Local Recv Time"}[1] / 1000000;
+}
+
+sub remote_transmit_time {
+  my($self) = @_;
+  return $self->{"Remote Transmit Time"}[0] + $self->{"Remote Transmit Time"}[1] / 1000000;
+}
+
+sub remote_recv_time {
+  my($self) = @_;
+  return $self->{"Remote Recv Time"}[0] + $self->{"Remote Recv Time"}[1] / 1000000;
+}
+
 sub rtt {
   my($self) = @_;
 
