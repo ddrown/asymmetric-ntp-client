@@ -193,7 +193,11 @@ while(1) {
   eval {
     $stats{requests}++;
     my $response = $client->get_ntp_response();
+    if($response->is_kod()) {
+      die("got kiss of death");
+    }
     if($response->stratum() != $config{expected_stratum}) {
+      print "reference: ",$response->ident(),"\n";
       die("stratum ".$response->stratum()." != ".$config{expected_stratum});
     }
     my $one_way_difference;
@@ -217,6 +221,11 @@ while(1) {
     }
   };
   if($@) {
+    if($@ =~ /kiss of death/) {
+      print "got kiss of death, are you using this against a public server?\n";
+      print "if not, check your restrict configuration on the server\n";
+      exit(1);
+    }
     print "ERROR: ",$@;
     $stats{error}++;
     sleep(10);

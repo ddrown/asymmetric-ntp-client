@@ -34,7 +34,7 @@ sub _pkt_to_raw {
 
   my(%tmp_pkt);
   my(@ntp_fields) = qw/byte1 stratum poll precision delay delay_fb disp disp_fb ident ref_time ref_time_fb org_time org_time_fb recv_time recv_time_fb trans_time trans_time_fb/;
-  @tmp_pkt{@ntp_fields} = unpack("a C3   n B16 n B16 H8   N B32 N B32   N B32 N B32", $data);
+  @tmp_pkt{@ntp_fields} = unpack("a C3   n B16 n B16 N   N B32 N B32   N B32 N B32", $data);
 
   return %tmp_pkt;
 }

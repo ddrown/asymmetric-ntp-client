@@ -30,6 +30,22 @@ sub _process {
 	];
 }
 
+sub is_kod {
+  my($self) = @_;
+
+  return(($self->stratum() == 0) and ($self->ident() eq "RATE"));
+}
+
+sub ident {
+  my($self) = @_;
+
+  if($self->{stratum} < 2) {
+    return sprintf("%c%c%c%c", $self->{"ident"} >> 24, ($self->{"ident"} >> 16) & 0xff, ($self->{"ident"} >> 8) & 0xff, $self->{"ident"} & 0xff);
+  } else {
+    return sprintf("%d.%d.%d.%d", $self->{"ident"} >> 24, ($self->{"ident"} >> 16) & 0xff, ($self->{"ident"} >> 8) & 0xff, $self->{"ident"} & 0xff);
+  }
+}
+
 sub stratum {
   my($self) = @_;
 
