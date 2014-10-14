@@ -23,6 +23,8 @@ my(%config) = (
   response => undef, # which direction is the cable modem downstream?
   force_proto => 0, # which protocol to force: IPv4, IPv6, or auto
   bits => 32, # 32 or 64 bits TODO: autodetect
+  interval => 1, # in seconds
+  report_interval => 20, # in $report_interval * $interval seconds
   );
 
 sub usage {
@@ -41,7 +43,7 @@ Options:
                                           recommended: 2* minimum_round_trip_time
  --static_offset=x........(defaults to 0) the number of microseconds it takes the request to reach
                                           the server.  You'll have to measure this independently. 
-					  A rough estimate would be rtt/2 - 4ms
+					  A rough estimate would be rtt/2 -/+ 4ms
  --skip-ntpd............................. Don't send the data to ntpd (for debugging)
  --help.................................. This help screen
  --expected-stratum=x.....(defaults to 1) The expected stratum of the remote clock. Answers not 
@@ -51,6 +53,9 @@ Options:
  --ipv6.................................. Force IPv6 (default: auto)
  --ipv4.................................. Force IPv4 (default: auto)
  --bits=x................(defaults to 32) Which platform ntpd is running under: 32bit or 64bit
+ --interval=x.............(defaults to 1) Number of seconds between each poll
+ --report-interval=x.....(defaults to 20) How many polls between sending the results to ntpd
+                                          (polls over max_rtt are not included)
 OPTIONS
 }
 
@@ -67,7 +72,18 @@ my $result = GetOptions (
     "ipv6" => sub { $config{force_proto} = "inet6"; },
     "ipv4" => sub { $config{force_proto} = "inet"; },
     "bits=i" => \$config{bits},
+    "interval=i" => \$config{interval},
+    "report-interval=i" => \$config{report_interval},
     );  # flag
+
+if($config{interval} < 1) {
+  print "sub 1s interval ignored\n";
+  $config{interval} = 1;
+}
+if($config{report_interval} > 100 or $config{report_interval} < 2) {
+  print "report interval ignored\n";
+  $config{report_interval} = 20;
+}
 
 $config{dns_lookup_interval} = $config{dns_lookup_interval} * 60;
 $config{static_offset} = $config{static_offset} / 1000000;
@@ -126,7 +142,7 @@ sub send_offset {
 sub process_responses {
   my($responses,$ntpd) = @_;
 
-  if(@$responses == 19) {
+  if(@$responses == $config{report_interval}) {
     my(@times);
     foreach my $response (@$responses) {
       if($config{response}) {
@@ -144,7 +160,7 @@ sub process_responses {
     my $pct_90 = percentile(\@all_response, 0.90);
     my $pct_03 = percentile(\@all_response, 0.03);
     my($filtered_mode,$item_count) = filtered_percentile(\@times, $pct_90, $pct_03, 0.5);
-    if($item_count < 10) { # start over if we're using less than 1/2 of the samples
+    if($item_count < int($config{report_interval}/2)) { # start over if we're using less than 1/2 of the samples
       @all_response = @times;
       $pct_90 = percentile(\@all_response, 0.90);
       $pct_03 = percentile(\@all_response, 0.03);
@@ -228,7 +244,7 @@ while(1) {
     }
     print "ERROR: ",$@;
     $stats{error}++;
-    sleep(10);
+    sleep(9+$config{interval}); # wait longer on errors, to backoff when it's caused by load
   }
-  sleep(1);
+  sleep($config{interval});
 }
