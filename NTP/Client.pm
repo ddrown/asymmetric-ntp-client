@@ -85,7 +85,7 @@ sub get_ntp_response {
 }
 
 sub lookup {
-  my($self,$hostname,$force_proto) = @_;
+  my($self,$hostname,$port,$force_proto) = @_;
 
   if($force_proto eq "inet6") {
     $force_proto = AF_INET6;
@@ -95,7 +95,7 @@ sub lookup {
     $force_proto = 0;
   }
 
-  my @results = getaddrinfo($hostname, "ntp", $force_proto, SOCK_DGRAM, "udp");
+  my @results = getaddrinfo($hostname, $port, $force_proto, SOCK_DGRAM, "udp");
   if(@results == 1) {
     die("".$results[0]);
   }

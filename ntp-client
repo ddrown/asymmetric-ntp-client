@@ -13,6 +13,7 @@ use NTP::ntpd::64;
 
 my(%config) = (
   hostname => undef,
+  port => 123,
   ntp_shmid => undef,
   dns_lookup_interval => 60, # in minutes
   max_rtt => 0.037, # in seconds, recomendation: 2x min rtt
@@ -37,6 +38,7 @@ and likely get your client banned.
 
 Options:
  --hostname=x............................ the hostname of the ntp server to poll (required)
+ --port=x...............(defaults to 123) the port of the ntp server to poll
  --ntp_shmid=x...(defaults to 0x4e545030) the ID of the shared memory from ntpd (see ipcs -m)
  --dns_lookup_interval=x (defaults to 60) the number of minutes between dns lookups
  --max_rtt=x..........(defaults to 0.037) the maximum number of seconds to wait for a response.
@@ -61,6 +63,7 @@ OPTIONS
 
 my $result = GetOptions (
     "hostname=s" => \$config{hostname},
+    "port=i" => \$config{port},
     "ntp_shmid=s" => \$config{ntp_shmid},
     "dns_lookup_interval=i" => \$config{dns_lookup_interval},
     "max_rtt=f" => \$config{max_rtt},
@@ -202,7 +205,7 @@ my(@responses);
 my $last_lookup = 0;
 while(1) {
   if($last_lookup < time() - $config{dns_lookup_interval}) {
-    $client->lookup($config{hostname},$config{force_proto});
+    $client->lookup($config{hostname},$config{port},$config{force_proto});
     $stats{lookups}++;
     $last_lookup = time();
   }
