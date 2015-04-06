@@ -178,13 +178,15 @@ sub process_responses {
     } else {
       $offset -= $config{static_offset};
     }
-    printf("%d %0.6f %0.6f %0.6f %0.6f %0.6f %0.6f %d S %d %d %d %d %d %d\n", time(), $pct_90, $pct_03, ($pct_90-$pct_03), $offset, $rtt_90, $rtt_10, $item_count, $stats{lookups}, $stats{requests}, $stats{responses}, $stats{over_rtt}, $stats{"reset"}, $stats{error});
+    printf("%10d %8.6f %8.6f %8.6f %9.6f %8.6f %8.6f %2d S %d %d %d %d %d %d\n", time(), $pct_90, $pct_03, ($pct_90-$pct_03), $offset, $rtt_90, $rtt_10, $item_count, $stats{lookups}, $stats{requests}, $stats{responses}, $stats{over_rtt}, $stats{"reset"}, $stats{error});
     if(not $config{skip_ntpd}) {
       send_offset($ntpd,$offset);
     }
     @$responses = ();
   }
 }
+
+printf("%10s %8s %8s %8s %9s %8s %8s %2s S %s %s %s %s %s %s\n", "time", "90%", "3%", "f.width", "offset", "rtt90%", "rtt10%", "RE", "DNS", "req", "res", "drop", "reset", "error");
 
 my $ntpd;
 if(not $config{skip_ntpd}) {
