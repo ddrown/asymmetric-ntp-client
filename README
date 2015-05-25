@@ -20,3 +20,20 @@ TODO:
  * Evaluate using the high jitter direction + rtt-based scaling as a second data point
 
 More info: http://blog.dan.drown.org/stratum-2-ntp-over-a-cable-modem/
+
+Also available is the ntp-dump client, which will show you the raw NTP data:
+
+	$ ./ntp-dump --hostname=clock.lan
+	IP: 10.1.2.192
+	Stratum: 1 (PPS)
+	Client Transmit: 1432576029.775497
+	Server Reference: 1432576015.499999
+	Server Recieve: 1432576029.775743
+	Server Transmit: 1432576029.776051
+	Client Recieve: 1432576029.776324
+	RTT: 0.827 ms
+	Offset: -0.475 ms
+	Flags leap=0 version=4 mode=4
+	Poll=0 precision=-20
+	Root Delay: 0.000000
+	Root Dispersion 0.000015

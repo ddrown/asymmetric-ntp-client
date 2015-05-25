@@ -1,0 +1,73 @@
+#!/usr/bin/perl
+
+# This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
+
+use strict;
+use FindBin;
+use lib "$FindBin::Bin";
+use NTP::Client;
+use Time::HiRes qw(gettimeofday);
+use Getopt::Long;
+use Data::Dumper;
+
+my(%config) = (
+  hostname => undef,
+  port => 123,
+  help => undef, # show help
+  force_proto => 0, # which protocol to force: IPv4, IPv6, or auto
+  );
+
+sub usage {
+  print <<OPTIONS
+$0: dump ntp response
+
+Options:
+ --hostname=x............................ the hostname of the ntp server to poll (required)
+ --port=x...............(defaults to 123) the port of the ntp server to poll
+ --help.................................. This help screen
+ --ipv6.................................. Force IPv6 (default: auto)
+ --ipv4.................................. Force IPv4 (default: auto)
+OPTIONS
+}
+
+my $result = GetOptions (
+    "hostname=s" => \$config{hostname},
+    "port=i" => \$config{port},
+    "help"  => \$config{help},
+    "ipv6" => sub { $config{force_proto} = "inet6"; },
+    "ipv4" => sub { $config{force_proto} = "inet"; },
+    );  # flag
+
+if(not defined $config{hostname} or $config{help} or not $result) {
+  usage();
+  exit(1);
+}
+
+my $client = NTP::Client->new();
+$client->lookup($config{hostname},$config{port},$config{force_proto});
+
+$| = 1;
+
+eval {
+  my $response = $client->get_ntp_response();
+  if($response->is_kod()) {
+    die("got kiss of death");
+  }
+  printf("IP: %s\n", $response->ip());
+  printf("Stratum: %d (%s)\n",$response->stratum(),$response->ident());
+  printf("Client Transmit: %s\n",$response->local_transmit_time());
+  printf("Server Reference: %s\n",$response->reference_time());
+  printf("Server Recieve: %s\n",$response->remote_recv_time());
+  printf("Server Transmit: %s\n",$response->remote_transmit_time());
+  printf("Client Recieve: %s\n",$response->local_recv_time());
+  printf("RTT: %0.3f ms\n",$response->rtt() * 1000);
+  printf("Offset: %0.3f ms\n",$response->offset() * 1000);
+  printf("Flags leap=%d version=%d mode=%d\n",$response->leap(), $response->version(), $response->mode());
+  printf("Poll=%d precision=%d\n",$response->poll(),$response->precision());
+  printf("Root Delay: %s\n",$response->root_delay());
+  printf("Root Dispersion %s\n",$response->root_dispersion());
+};
+if($@) {
+  print "NTP Client failed: $@";
+  exit(1);
+}

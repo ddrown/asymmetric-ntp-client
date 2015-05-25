@@ -26,7 +26,7 @@ sub _time_to_pkt {
   my $client_adj_localtime  = $client_localtime->[0] + NTP_ADJ;
   my $client_frac_localtime = frac2bin($client_localtime->[1]);
 
-  return pack("B8 C3 N10 B32", '00011011', (0) x 12, $client_adj_localtime, $client_frac_localtime);
+  return pack("B8 C3 N10 B32", '00100011', (0) x 12, $client_adj_localtime, $client_frac_localtime);
 }
 
 sub _pkt_to_raw {
@@ -34,7 +34,7 @@ sub _pkt_to_raw {
 
   my(%tmp_pkt);
   my(@ntp_fields) = qw/byte1 stratum poll precision delay delay_fb disp disp_fb ident ref_time ref_time_fb org_time org_time_fb recv_time recv_time_fb trans_time trans_time_fb/;
-  @tmp_pkt{@ntp_fields} = unpack("a C3   n B16 n B16 N   N B32 N B32   N B32 N B32", $data);
+  @tmp_pkt{@ntp_fields} = unpack("C3c   n B16 n B16 N   N B32 N B32   N B32 N B32", $data);
 
   return %tmp_pkt;
 }
@@ -80,6 +80,7 @@ sub get_ntp_response {
   $raw_pkt{"sent"} = $sent;
   $raw_pkt{"sent2"} = $sent2;
   $raw_pkt{"recv"} = $recv;
+  $raw_pkt{"ip"} = $self->{expected_ip};
 
   return NTP::Response->new(%raw_pkt);
 }

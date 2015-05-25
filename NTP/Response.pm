@@ -52,29 +52,34 @@ sub stratum {
   return $self->{"stratum"};
 }
 
+sub _format_ts {
+  my($self,$ts) = @_;
+  return sprintf("%d.%06d",$ts->[0],$ts->[1]); # full timestamp as float hits precision limits
+}
+
 sub local_transmit_time {
   my($self) = @_;
-  return $self->{"Local Transmit Time"}[0] + $self->{"Local Transmit Time"}[1] / 1000000;
+  return $self->_format_ts($self->{"Local Transmit Time"});
 }
 
 sub local_transmit_time_after_processing {
   my($self) = @_;
-  return $self->{"sent2"}[0] + $self->{"sent2"}[1] / 1000000;
+  return $self->_format_ts($self->{"sent2"});
 }
 
 sub local_recv_time {
   my($self) = @_;
-  return $self->{"Local Recv Time"}[0] + $self->{"Local Recv Time"}[1] / 1000000;
+  return $self->_format_ts($self->{"Local Recv Time"});
 }
 
 sub remote_transmit_time {
   my($self) = @_;
-  return $self->{"Remote Transmit Time"}[0] + $self->{"Remote Transmit Time"}[1] / 1000000;
+  return $self->_format_ts($self->{"Remote Transmit Time"});
 }
 
 sub remote_recv_time {
   my($self) = @_;
-  return $self->{"Remote Recv Time"}[0] + $self->{"Remote Recv Time"}[1] / 1000000;
+  return $self->_format_ts($self->{"Remote Recv Time"});
 }
 
 sub rtt {
@@ -115,6 +120,53 @@ sub when {
   my($self) = @_;
 
   return $self->{"Local Transmit Time"}[0];
+}
+
+sub leap {
+  my($self) = @_;
+  return $self->{"byte1"} >> 6;
+}
+sub version {
+  my($self) = @_;
+  return ($self->{"byte1"} >> 3) & 0b111;
+}
+sub mode {
+  my($self) = @_;
+  return $self->{"byte1"} & 0b111;
+}
+sub poll {
+  my($self) = @_;
+  return $self->{"poll"};
+}
+sub precision {
+  my($self) = @_;
+  return $self->{"precision"};
+}
+sub ip {
+  my($self) = @_;
+  return $self->{"ip"};
+}
+sub root_delay {
+  my($self) = @_;
+  return $self->_format_ts([
+                $self->{"delay"},
+                bin2frac($self->{"delay_fb"})
+                ]);
+}
+sub root_dispersion {
+  my($self) = @_;
+  return $self->_format_ts([
+                $self->{"disp"},
+                bin2frac($self->{"disp_fb"})
+                ]);
+}
+sub reference_time {
+  my($self) = @_;
+
+  return $self->_format_ts([
+      $self->{"ref_time"} - NTP_ADJ(), 
+      bin2frac($self->{"ref_time_fb"})
+      ]);
 }
 
 1;
