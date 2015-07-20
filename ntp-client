@@ -207,9 +207,17 @@ my(@responses);
 my $last_lookup = 0;
 while(1) {
   if($last_lookup < time() - $config{dns_lookup_interval}) {
-    $client->lookup($config{hostname},$config{port},$config{force_proto});
-    $stats{lookups}++;
-    $last_lookup = time();
+    do {
+      eval {
+        $client->lookup($config{hostname},$config{port},$config{force_proto});
+        $stats{lookups}++;
+        $last_lookup = time();
+      };
+      if($@) {
+        print "Lookup error: $@";
+        sleep(60);
+      }
+    } while($@);
   }
   eval {
     $stats{requests}++;
