@@ -122,6 +122,17 @@ sub when {
   return $self->{"Local Transmit Time"}[0];
 }
 
+sub local_ts {
+  my($self) = @_;
+
+  return $self->{"Local Transmit Time"};
+}
+
+sub local_delta {
+  my($self,$start) = @_;
+  return tv_interval($start, $self->{"Local Transmit Time"});
+}
+
 sub leap {
   my($self) = @_;
   return $self->{"byte1"} >> 6;

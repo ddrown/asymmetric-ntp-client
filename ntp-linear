@@ -1,0 +1,293 @@
+#!/usr/bin/perl
+
+# This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
+
+use strict;
+use FindBin;
+use lib "$FindBin::Bin";
+use NTP::Client;
+use Time::HiRes qw(gettimeofday tv_interval sleep);
+use Getopt::Long;
+use NTP::ntpd;
+use NTP::ntpd::64;
+
+my(%config) = (
+  hostname => undef,
+  port => 123,
+  ntp_shmid => undef,
+  dns_lookup_interval => 60, # in minutes
+  max_rtt => 0.037, # in seconds, recomendation: 2x min rtt
+  static_offset => 0, # in microseconds
+  help => undef, # show help
+  skip_ntpd => undef, # don't send the data to ntpd
+  expected_stratum => 1, # the clock stratum to expect
+  force_proto => 0, # which protocol to force: IPv4, IPv6, or auto
+  bits => 32, # 32 or 64 bits TODO: autodetect
+  interval => 1, # in seconds
+  report_interval => 20, # in $report_interval * $interval seconds
+  );
+
+sub usage {
+  print <<OPTIONS
+$0: measure ntp offsets, filter them, and submit them to ntpd via the shared memory interface
+
+WARNING: do not run this against any NTP server you do not personally run.  It
+sends one packet per second, which will annoy any public NTP server operator,
+and likely get your client banned.
+
+Options:
+ --hostname=x............................ the hostname of the ntp server to poll (required)
+ --port=x...............(defaults to 123) the port of the ntp server to poll
+ --ntp_shmid=x...(defaults to 0x4e545030) the ID of the shared memory from ntpd (see ipcs -m)
+ --dns_lookup_interval=x (defaults to 60) the number of minutes between dns lookups
+ --max_rtt=x..........(defaults to 0.037) the maximum number of seconds to wait for a response.
+                                          recommended: 2* minimum_round_trip_time
+ --static_offset=x........(defaults to 0) the number of microseconds it takes the request to reach
+                                          the server.  You'll have to measure this independently. 
+					  A rough estimate would be rtt/2 -/+ 4ms
+ --skip-ntpd............................. Don't send the data to ntpd (for debugging)
+ --help.................................. This help screen
+ --expected-stratum=x.....(defaults to 1) The expected stratum of the remote clock. Answers not 
+                                          matching this will be ignored
+ --ipv6.................................. Force IPv6 (default: auto)
+ --ipv4.................................. Force IPv4 (default: auto)
+ --bits=x................(defaults to 32) Which platform ntpd is running under: 32bit or 64bit
+ --interval=x.............(defaults to 1) Number of seconds between each poll
+ --report-interval=x.....(defaults to 20) How many polls between sending the results to ntpd
+                                          (polls over max_rtt are not included)
+OPTIONS
+}
+
+my $result = GetOptions (
+    "hostname=s" => \$config{hostname},
+    "port=i" => \$config{port},
+    "ntp_shmid=s" => \$config{ntp_shmid},
+    "dns_lookup_interval=i" => \$config{dns_lookup_interval},
+    "max_rtt=f" => \$config{max_rtt},
+    "static_offset=i" => \$config{static_offset},
+    "help"  => \$config{help},
+    "skip-ntpd" => \$config{skip_ntpd},
+    "expected-stratum=i" => \$config{expected_stratum},
+    "ipv6" => sub { $config{force_proto} = "inet6"; },
+    "ipv4" => sub { $config{force_proto} = "inet"; },
+    "bits=i" => \$config{bits},
+    "interval=f" => \$config{interval},
+    "report-interval=i" => \$config{report_interval},
+    );  # flag
+
+if($config{interval} < 1) {
+  print "sub 1s interval ignored\n";
+  $config{interval} = 1;
+}
+if($config{report_interval} > 100 or $config{report_interval} < 2) {
+  print "report interval ignored\n";
+  $config{report_interval} = 20;
+}
+
+$config{dns_lookup_interval} = $config{dns_lookup_interval} * 60;
+$config{static_offset} = $config{static_offset} / 1000000;
+if(not defined $config{ntp_shmid}) {
+  $config{ntp_shmid} = 0x4e545030;
+} else {
+  $config{ntp_shmid} = hex($config{ntp_shmid});
+}
+
+if(not defined $config{hostname} or $config{help} or not $result) {
+  usage();
+  exit(1);
+}
+
+our(%stats, @all_response, @all_rtt);
+
+sub simple_linear_regression {
+  my($points_x, $points_y, $avg_x, $avg_y) = @_;
+
+  my($num,$denom);
+  for(my $i = 0; $i < scalar(@$points_x); $i++) {
+    $num += ($points_x->[$i] - $avg_x)*($points_y->[$i] - $avg_y);
+    $denom += ($points_x->[$i] - $avg_x) ** 2;
+  }
+
+  my $simp_a = $num / $denom;
+  my $simp_b = $avg_y - $simp_a * $avg_x;
+  return ($simp_a, $simp_b);
+}
+
+sub theil_sen {
+  my($points_x, $points_y, $avg_x, $avg_y) = @_;
+
+  my(@slopes);
+  for(my $i = 0; $i < scalar(@$points_x); $i++) {
+    for(my $j = $i+1; $j < scalar(@$points_x); $j++) {
+      push(@slopes, ($points_y->[$j] - $points_y->[$i]) / ($points_x->[$j] - $points_x->[$i]));
+    }
+  }
+  @slopes = sort { $a <=> $b } @slopes;
+  my $median_slope_idx = int(scalar(@slopes) / 2);
+  my $theil_a = $slopes[$median_slope_idx];
+  my $theil_b = $avg_y - $theil_a * $avg_x;
+  return ($theil_a, $theil_b);
+}
+
+sub average {
+  my($points) = @_;
+
+  my($sum);
+  map { $sum += $_ } @$points;
+  return $sum / scalar(@$points);
+}
+
+sub chisq {
+  my($points_x, $points_y, $a, $b) = @_;
+
+  my($chisq);
+  for(my $i = 0; $i < scalar(@$points_x); $i++) {
+    $chisq += ($points_y->[$i] - $points_x->[$i]*$a - $b) ** 2;
+  }
+  return $chisq;
+}
+
+sub linear_fit {
+  my($ntpd,@responses) = @_;
+
+  my($start) = $responses[0]->local_ts(); 
+
+  my(@points_t,@points_req,@points_resp,@points_offset,@rtt);
+  foreach my $response (@responses) {
+    push(@points_t, $response->local_delta($start));
+    push(@points_req, $response->request());
+    push(@points_resp, $response->response());
+    push(@points_offset, $response->offset());
+    push(@rtt, $response->rtt());
+  }
+
+  my($avg_t) = average(\@points_t);
+  my($avg_req) = average(\@points_req);
+  my($avg_resp) = average(\@points_resp);
+  my($avg_offset) = average(\@points_offset);
+  my($avg_rtt) = average(\@rtt);
+
+  my($theil_a_req, $theil_b_req) = theil_sen(\@points_t, \@points_req, $avg_t, $avg_req);
+  my($theil_a_resp, $theil_b_resp) = theil_sen(\@points_t, \@points_resp, $avg_t, $avg_resp);
+  my($theil_a_offset, $theil_b_offset) = theil_sen(\@points_t, \@points_offset, $avg_t, $avg_offset);
+
+  my($chi_req) = chisq(\@points_t, \@points_req, $theil_a_req, $theil_b_req);
+  my($chi_resp) = chisq(\@points_t, \@points_resp, $theil_a_resp, $theil_b_resp);
+  my($chi_offset) = chisq(\@points_t, \@points_offset, $theil_a_offset, $theil_b_offset);
+
+  my($used,$a,$b);
+  if($chi_req <= $chi_resp) {
+    if($chi_req <= $chi_offset) {
+      $used = "req";
+      $a = $theil_a_req;
+      $b = $theil_b_req;
+    } else {
+      $used = "offs";
+      $a = $theil_a_offset;
+      $b = $theil_b_offset;
+    }
+  } elsif($chi_resp <= $chi_offset) {
+    $used = "resp";
+    $a = $theil_a_resp;
+    $b = $theil_b_resp;
+  } else {
+    $used = "offs";
+    $a = $theil_a_offset;
+    $b = $theil_b_offset;
+  }
+  my $offset = send_linear_fit($ntpd, $start, $a, $b);
+
+  printf("%25s %7.3f %7.3f %8.3f %8.3f %8.3f %8.3f %8.3f %4s\n", scalar(gmtime()), $a*1000000, $b*1000, $offset*1000, $chi_req*1000000, $chi_resp*1000000, $chi_offset*1000000, $avg_rtt*1000, $used);
+}
+
+sub send_linear_fit {
+  my($ntpd, $start, $a, $b) = @_;
+
+  my $local = [gettimeofday()];
+
+  my $offset = tv_interval($start, $local) * $a + $b - $config{static_offset}; # TODO: static_offset is wrong for non-req?
+
+  my $remote_s = $local->[0] + $local->[1]/1000000 + $offset;
+  my $remote_us = ($remote_s - int($remote_s)) * 1000000;
+  $remote_us = int($remote_us);
+  $remote_s = int($remote_s);
+
+  my $remote = [$remote_s, $remote_us];
+
+  if(not $config{skip_ntpd}) {
+    $ntpd->send_time($local, $remote);
+  }
+
+  return $offset;
+}
+
+my(@responses);
+sub process_response {
+  my($ntpd,$response) = @_;
+
+  push(@responses, $response);
+  if(@responses == $config{report_interval}) { # TODO: make this seconds based?
+    linear_fit($ntpd,@responses);
+    @responses = ();
+  }
+}
+
+printf("%25s %7s %7s %8s %8s %8s %8s %8s %4s\n", "time", "ppm", "avg", "offset", "req c", "resp c", "offset c", "rtt", "used");
+
+my $ntpd;
+if(not $config{skip_ntpd}) {
+  if($config{bits} == 64) {
+    $ntpd = NTP::ntpd::64->new(shmkey => $config{ntp_shmid});
+  } else {
+    $ntpd = NTP::ntpd->new(shmkey => $config{ntp_shmid});
+  }
+}
+
+my $client = NTP::Client->new();
+
+$| = 1;
+
+my $last_lookup = 0;
+while(1) {
+  if($last_lookup < time() - $config{dns_lookup_interval}) {
+    do {
+      eval {
+        $client->lookup($config{hostname},$config{port},$config{force_proto});
+        $stats{lookups}++;
+        $last_lookup = time();
+      };
+      if($@) {
+        print "Lookup error: $@";
+        sleep(60);
+      }
+    } while($@);
+  }
+  eval {
+    $stats{requests}++;
+    my $response = $client->get_ntp_response(); # TODO: use CLOCK_MONOTONIC_RAW?
+    if($response->is_kod()) {
+      die("got kiss of death");
+    }
+    if($response->stratum() != $config{expected_stratum}) {
+      print "reference: ",$response->ident(),"\n";
+      die("stratum ".$response->stratum()." != ".$config{expected_stratum});
+    }
+    $stats{responses}++;
+    if($response->rtt() < $config{max_rtt}) {
+      process_response($ntpd,$response);
+    } else {
+      $stats{over_rtt}++;
+    }
+  };
+  if($@) {
+    if($@ =~ /kiss of death/) {
+      print "got kiss of death, are you using this against a public server?\n";
+      print "if not, check your restrict configuration on the server\n";
+      exit(1);
+    }
+    print "ERROR: ",$@;
+    $stats{error}++;
+    sleep(9+$config{interval}); # wait longer on errors, to backoff when it's caused by load
+  }
+  sleep($config{interval});
+}

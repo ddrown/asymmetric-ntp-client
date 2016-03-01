@@ -61,7 +61,7 @@ sub send_time {
 
   my $nsamples = 0;
   my $valid = 1;
-  my $precision = -13; # 2^-13 = 122 microseconds ~ 125us
+  my $precision = -20; # 2^-20 = 953 nanoseconds ~ 1us
   my $leap = 0;
   my $count = 0;
   my $mode = 0;
