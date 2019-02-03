@@ -5,8 +5,7 @@ package NTP::Client;
 # This library is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
 
 use strict;
-use Socket qw(AF_INET AF_INET6 SOCK_DGRAM unpack_sockaddr_in);
-use Socket6 qw(getaddrinfo unpack_sockaddr_in6 inet_ntop);
+use Socket qw(AF_INET AF_INET6 SOCK_DGRAM unpack_sockaddr_in getaddrinfo unpack_sockaddr_in6 inet_ntop);
 use Time::HiRes qw(gettimeofday tv_interval);
 use NTP::Response;
 use NTP::Common qw(NTP_ADJ frac2bin);
@@ -96,9 +95,9 @@ sub lookup {
     $force_proto = 0;
   }
 
-  my @results = getaddrinfo($hostname, $port, $force_proto, SOCK_DGRAM, "udp");
-  if(@results == 1) {
-    die("".$results[0]);
+  my($err, @results) = getaddrinfo($hostname, $port, {protocol => "udp", socktype => SOCK_DGRAM, family => $force_proto});
+  if($err) {
+    die("getaddrinfo failed: $err");
   }
 
   if(defined($self->{"socket"}) and $self->{family} != $results[0]) { # family changed
@@ -108,10 +107,10 @@ sub lookup {
     $self->{"socket"} = undef;
   }
 
-  $self->{family} = $results[0];
-  $self->{type} = $results[1];
-  $self->{protocol} = $results[2];
-  $self->{addr} = $results[3];
+  $self->{family} = $results[0]{family};
+  $self->{type} = $results[0]{socktype};
+  $self->{protocol} = $results[0]{protocol};
+  $self->{addr} = $results[0]{addr};
 
   my($expected_port,$expected_ip);
   if($self->{family} == AF_INET6) {
