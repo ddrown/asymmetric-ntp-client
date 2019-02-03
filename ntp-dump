@@ -57,6 +57,7 @@ eval {
   printf("Stratum: %d (%s)\n",$response->stratum(),$response->ident());
   printf("Client Transmit: %s\n",$response->local_transmit_time());
   printf("Server Reference: %s\n",$response->reference_time());
+  printf("Server Originate %s\n",$response->originate_time());
   printf("Server Recieve: %s\n",$response->remote_recv_time());
   printf("Server Transmit: %s\n",$response->remote_transmit_time());
   printf("Client Recieve: %s\n",$response->local_recv_time());
@@ -66,6 +67,7 @@ eval {
   printf("Poll=%d precision=%d\n",$response->poll(),$response->precision());
   printf("Root Delay: %s\n",$response->root_delay());
   printf("Root Dispersion %s\n",$response->root_dispersion());
+# trans_time
 };
 if($@) {
   print "NTP Client failed: $@";

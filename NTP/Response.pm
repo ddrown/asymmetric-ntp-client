@@ -175,8 +175,16 @@ sub reference_time {
   my($self) = @_;
 
   return $self->_format_ts([
-      $self->{"ref_time"} - NTP_ADJ(), 
+      $self->{"ref_time"} - NTP_ADJ(),
       bin2frac($self->{"ref_time_fb"})
+      ]);
+}
+sub originate_time {
+  my($self) = @_;
+
+  return $self->_format_ts([
+      $self->{"org_time"} - NTP_ADJ(),
+      bin2frac($self->{"org_time_fb"})
       ]);
 }
 
