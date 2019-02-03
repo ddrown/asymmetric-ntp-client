@@ -15,6 +15,8 @@ my(%config) = (
   port => 123,
   help => undef, # show help
   force_proto => 0, # which protocol to force: IPv4, IPv6, or auto
+  poll => undef,
+  short => undef
   );
 
 sub usage {
@@ -27,6 +29,8 @@ Options:
  --help.................................. This help screen
  --ipv6.................................. Force IPv6 (default: auto)
  --ipv4.................................. Force IPv4 (default: auto)
+ --poll=x................................ Poll every x seconds
+ --short................................. Only return RTT and offset data
 OPTIONS
 }
 
@@ -36,6 +40,8 @@ my $result = GetOptions (
     "help"  => \$config{help},
     "ipv6" => sub { $config{force_proto} = "inet6"; },
     "ipv4" => sub { $config{force_proto} = "inet"; },
+    "poll=i" => \$config{poll},
+    "short" => \$config{short}
     );  # flag
 
 if(not defined $config{hostname} or $config{help} or not $result) {
@@ -48,28 +54,36 @@ $client->lookup($config{hostname},$config{port},$config{force_proto});
 
 $| = 1;
 
-eval {
-  my $response = $client->get_ntp_response();
-  if($response->is_kod()) {
-    die("got kiss of death");
+do {
+  eval {
+    my $response = $client->get_ntp_response();
+    if($response->is_kod()) {
+      die("got kiss of death");
+    }
+    if($config{short}) {
+      printf("RTT(ms),Offset(ms): %0.3f %0.3f\n",$response->rtt() * 1000, $response->offset() * 1000);
+    } else {
+      printf("IP: %s\n", $response->ip());
+      printf("Stratum: %d (%s)\n",$response->stratum(),$response->ident());
+      printf("Client Transmit: %s\n",$response->local_transmit_time());
+      printf("Server Reference: %s\n",$response->reference_time());
+      printf("Server Originate %s\n",$response->originate_time());
+      printf("Server Recieve: %s\n",$response->remote_recv_time());
+      printf("Server Transmit: %s\n",$response->remote_transmit_time());
+      printf("Client Recieve: %s\n",$response->local_recv_time());
+      printf("RTT: %0.3f ms\n",$response->rtt() * 1000);
+      printf("Offset: %0.3f ms\n",$response->offset() * 1000);
+      printf("Flags leap=%d version=%d mode=%d\n",$response->leap(), $response->version(), $response->mode());
+      printf("Poll=%d precision=%d\n",$response->poll(),$response->precision());
+      printf("Root Delay: %s\n",$response->root_delay());
+      printf("Root Dispersion %s\n",$response->root_dispersion());
+    }
+  };
+  if($@) {
+    print "NTP Client failed: $@";
+    exit(1);
   }
-  printf("IP: %s\n", $response->ip());
-  printf("Stratum: %d (%s)\n",$response->stratum(),$response->ident());
-  printf("Client Transmit: %s\n",$response->local_transmit_time());
-  printf("Server Reference: %s\n",$response->reference_time());
-  printf("Server Originate %s\n",$response->originate_time());
-  printf("Server Recieve: %s\n",$response->remote_recv_time());
-  printf("Server Transmit: %s\n",$response->remote_transmit_time());
-  printf("Client Recieve: %s\n",$response->local_recv_time());
-  printf("RTT: %0.3f ms\n",$response->rtt() * 1000);
-  printf("Offset: %0.3f ms\n",$response->offset() * 1000);
-  printf("Flags leap=%d version=%d mode=%d\n",$response->leap(), $response->version(), $response->mode());
-  printf("Poll=%d precision=%d\n",$response->poll(),$response->precision());
-  printf("Root Delay: %s\n",$response->root_delay());
-  printf("Root Dispersion %s\n",$response->root_dispersion());
-# trans_time
-};
-if($@) {
-  print "NTP Client failed: $@";
-  exit(1);
-}
+  if($config{poll}) {
+    sleep($config{poll});
+  }
+} while($config{poll});
