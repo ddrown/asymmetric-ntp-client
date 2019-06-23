@@ -5,7 +5,14 @@ package NTP::Client;
 # This library is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
 
 use strict;
-use Socket qw(AF_INET AF_INET6 SOCK_DGRAM unpack_sockaddr_in getaddrinfo unpack_sockaddr_in6 inet_ntop);
+use Socket qw(AF_INET AF_INET6 SOCK_DGRAM unpack_sockaddr_in getaddrinfo unpack_sockaddr_in6 inet_ntop SOL_SOCKET MSG_ERRQUEUE MSG_DONTWAIT);
+use constant {
+  SO_TIMESTAMPING => 37,
+  SOF_TIMESTAMPING_SOFTWARE => 1<<4,
+  SOF_TIMESTAMPING_TX_SOFTWARE => 1<<1,
+  SOF_TIMESTAMPING_RX_SOFTWARE => 1<<3
+};
+use Socket::MsgHdr;
 use Time::HiRes qw(gettimeofday tv_interval);
 use NTP::Response;
 use NTP::Common qw(NTP_ADJ frac2bin);
@@ -38,12 +45,33 @@ sub _pkt_to_raw {
   return %tmp_pkt;
 }
 
+sub _kernel_timestamp {
+  my($self,$kernelbytes) = @_;
+
+  my($tv_sec,$tv_nsec) = unpack("qq", $kernelbytes);
+  return ($tv_sec, $tv_nsec);
+}
+
+sub _msg_to_timestamp {
+  my($self,$msg) = @_;
+
+  my @cmsg = $msg->cmsghdr();
+  while (my ($level, $type, $data) = splice(@cmsg, 0, 3)) {
+    if($level == SOL_SOCKET and $type == SO_TIMESTAMPING) {
+      my $kernel_ts = substr($data,0,16,"");
+      return $self->_kernel_timestamp($kernel_ts);
+    }
+  }
+
+  return ();
+}
+
 sub get_ntp_response {
   my($self) = @_;
 
-  my $data;
-
-  my($sent,$sent2,$recv);
+  my($sent,$sent2,$recv,@rx_timestamp,@tx_timestamp);
+  my $recvmsg = new Socket::MsgHdr(buflen => 960, namelen => 16, controllen => 256);
+  my $sentmsg = new Socket::MsgHdr(buflen => 960, namelen => 16, controllen => 256);
   my $ntp_msg = $self->_time_to_pkt([gettimeofday]);
 
   $sent = [gettimeofday];
@@ -53,16 +81,20 @@ sub get_ntp_response {
   eval {
     local $SIG{ALRM} = sub { die "Net::NTP timed out geting NTP packet\n"; };
     alarm(60);
-    my $from = recv($self->{"socket"},$data,960,0)
-      or die "recv() failed: $!\n";
+    my $bytes = recvmsg($self->{"socket"},$recvmsg,0)
+      or die "recvmsg() failed: $!\n";
+    my $sentbytes = recvmsg($self->{"socket"},$sentmsg,MSG_ERRQUEUE|MSG_DONTWAIT)
+      or die "recvmsg_errqueue() failed: $!\n";
     $recv = [gettimeofday];
     alarm(0);
+    @rx_timestamp = $self->_msg_to_timestamp($recvmsg);
+    @tx_timestamp = $self->_msg_to_timestamp($sentmsg);
 
     my($actual_port,$actual_ip);
     if($self->{family} == AF_INET6) {
-      ($actual_port,$actual_ip) = unpack_sockaddr_in6($from);
+      ($actual_port,$actual_ip) = unpack_sockaddr_in6($recvmsg->name);
     } else {
-      ($actual_port,$actual_ip) = unpack_sockaddr_in($from);
+      ($actual_port,$actual_ip) = unpack_sockaddr_in($recvmsg->name);
     }
     $actual_ip = inet_ntop($self->{family},$actual_ip);
     if($actual_ip ne $self->{expected_ip}) {
@@ -74,11 +106,21 @@ sub get_ntp_response {
     die "$@";
   }
 
-  my %raw_pkt = $self->_pkt_to_raw($data);
+  my %raw_pkt = $self->_pkt_to_raw($recvmsg->buf);
 
-  $raw_pkt{"sent"} = $sent;
+  if(@tx_timestamp) {
+    $tx_timestamp[1] /= 1000; # ns to us
+    $raw_pkt{"sent"} = \@tx_timestamp;
+  } else {
+    $raw_pkt{"sent"} = $sent;
+  }
   $raw_pkt{"sent2"} = $sent2;
-  $raw_pkt{"recv"} = $recv;
+  if(@rx_timestamp) {
+    $rx_timestamp[1] /= 1000; # ns to us
+    $raw_pkt{"recv"} = \@rx_timestamp;
+  } else {
+    $raw_pkt{"recv"} = $recv;
+  }
   $raw_pkt{"ip"} = $self->{expected_ip};
 
   return NTP::Response->new(%raw_pkt);
@@ -122,6 +164,7 @@ sub lookup {
 
   if(not defined $self->{"socket"}) {
     socket($self->{"socket"}, $self->{family}, $self->{type}, $self->{protocol});
+    setsockopt($self->{"socket"}, SOL_SOCKET, SO_TIMESTAMPING, SOF_TIMESTAMPING_SOFTWARE|SOF_TIMESTAMPING_TX_SOFTWARE|SOF_TIMESTAMPING_RX_SOFTWARE);
   }
 }
 
