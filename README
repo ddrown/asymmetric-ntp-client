@@ -2,7 +2,7 @@ WARNING: do not run this against any NTP server you do not personally run.  It
 sends one packet per second, which will annoy any public NTP server operator,
 and likely get your client banned.
 
-Requires the perl modules Socket6 and Time::HiRes
+Requires the perl modules Socket::MsgHdr and Time::HiRes
 
 This program is free software; you can redistribute it and/or modify it under the same terms as Perl itself.
 
