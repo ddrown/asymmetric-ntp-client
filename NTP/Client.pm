@@ -142,8 +142,8 @@ sub lookup {
     die("getaddrinfo failed: $err");
   }
 
-  if(defined($self->{"socket"}) and $self->{family} != $results[0]) { # family changed
-    warn("address family changed from $self->{family} to $results[0]\n");
+  if(defined($self->{"socket"}) and $self->{family} != $results[0]{family}) { # family changed
+    warn("address family changed from $self->{family} to $results[0]{family}\n");
 
     close($self->{"socket"});
     $self->{"socket"} = undef;
