@@ -143,6 +143,32 @@ sub average {
   return $sum / scalar(@$points);
 }
 
+sub min {
+  my($points) = @_;
+
+  my $min;
+  foreach my $pt (@$points) {
+    if($pt < $min or not defined($min)) {
+      $min = $pt;
+    }
+  }
+
+  return $min;
+}
+
+sub max {
+  my($points) = @_;
+
+  my $max;
+  foreach my $pt (@$points) {
+    if($pt > $max or not defined($max)) {
+      $max = $pt;
+    }
+  }
+
+  return $max;
+}
+
 sub chisq {
   my($points_x, $points_y, $a, $b) = @_;
 
@@ -172,6 +198,8 @@ sub linear_fit {
   my($avg_resp) = average(\@points_resp);
   my($avg_offset) = average(\@points_offset);
   my($avg_rtt) = average(\@rtt);
+  my($min_rtt) = min(\@rtt);
+  my($max_rtt) = max(\@rtt);
 
   my($theil_a_req, $theil_b_req) = theil_sen(\@points_t, \@points_req, $avg_t, $avg_req);
   my($theil_a_resp, $theil_b_resp) = theil_sen(\@points_t, \@points_resp, $avg_t, $avg_resp);
@@ -213,7 +241,7 @@ sub linear_fit {
     $used = "!$used"; # not sent
   }
 
-  printf("%25s %7.3f %7.3f %8.3f %8.3f %8.3f %8.3f %8.3f %5s\n", scalar(gmtime()), $a*1000000, $b*1000, $offset*1000, $chi_req*1000000, $chi_resp*1000000, $chi_offset*1000000, $avg_rtt*1000, $used);
+  printf("%10u %7.3f %7.3f %8.3f %8.3f %8.3f %8.3f %6.3f/%6.3f/%6.3f %5s\n", time(), $a*1000000, $b*1000, $offset*1000, $chi_req*1000000, $chi_resp*1000000, $chi_offset*1000000, $min_rtt*1000, $avg_rtt*1000, $max_rtt*1000, $used);
 }
 
 sub send_linear_fit {
@@ -248,7 +276,6 @@ sub process_response {
   }
 }
 
-printf("%25s %7s %7s %8s %8s %8s %8s %8s %5s\n", "time", "ppm", "avg", "offset", "req c", "resp c", "offset c", "rtt", "used");
 
 my $ntpd;
 if(not $config{skip_ntpd}) {
@@ -264,8 +291,10 @@ my $client = NTP::Client->new();
 $| = 1;
 
 my $last_lookup = 0;
+my $last_header = 0;
 while(1) {
   if($last_lookup < time() - $config{dns_lookup_interval}) {
+    printf("%10s %7s %7s %8s %8s %8s %8s %18s   %5s\n", "time", "ppm", "avg", "offset", "req c", "resp c", "offset c", "min/avg/max rtt", "used");
     do {
       eval {
         $client->lookup($config{hostname},$config{port},$config{force_proto});
