@@ -69,6 +69,12 @@ sub _msg_to_timestamp {
 sub get_ntp_response {
   my($self) = @_;
 
+  my $dropmsg = new Socket::MsgHdr(buflen => 960, namelen => 16, controllen => 256);
+
+  # check for any queued loopback packets and drop them
+  while(recvmsg($self->{"socket"},$dropmsg,MSG_ERRQUEUE|MSG_DONTWAIT) > 0) {
+  }
+
   my($sent,$sent2,$recv,@rx_timestamp,@tx_timestamp);
   my $recvmsg = new Socket::MsgHdr(buflen => 960, namelen => 16, controllen => 256);
   my $sentmsg = new Socket::MsgHdr(buflen => 960, namelen => 16, controllen => 256);
