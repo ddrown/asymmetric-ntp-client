@@ -18,6 +18,7 @@ my(%config) = (
   dns_lookup_interval => 60, # in minutes
   max_rtt => 0.037, # in seconds, recomendation: 2x min rtt
   static_offset => 0, # in microseconds
+  offset_file => undef, # load static_offset from file
   help => undef, # show help
   skip_ntpd => undef, # don't send the data to ntpd
   expected_stratum => 1, # the clock stratum to expect
@@ -46,6 +47,7 @@ Options:
  --static_offset=x........(defaults to 0) the number of microseconds it takes the request to reach
                                           the server.  You'll have to measure this independently. 
 					  A rough estimate would be rtt/2 -/+ 4ms
+ --offset-file=x......................... Load static_offset from a file
  --skip-ntpd............................. Don't send the data to ntpd (for debugging)
  --help.................................. This help screen
  --expected-stratum=x.....(defaults to 1) The expected stratum of the remote clock. Answers not 
@@ -69,6 +71,7 @@ my $result = GetOptions (
     "max_rtt=f" => \$config{max_rtt},
     "max_chisq=f" => \$config{max_chisq},
     "static_offset=i" => \$config{static_offset},
+    "offset-file=s" => \$config{offset_file},
     "help"  => \$config{help},
     "skip-ntpd" => \$config{skip_ntpd},
     "expected-stratum=i" => \$config{expected_stratum},
@@ -90,6 +93,7 @@ if($config{report_interval} > 100 or $config{report_interval} < 2) {
 
 $config{dns_lookup_interval} = $config{dns_lookup_interval} * 60;
 $config{static_offset} = $config{static_offset} / 1000000;
+check_offset_file();
 if(not defined $config{ntp_shmid}) {
   $config{ntp_shmid} = 0x4e545030;
 } else {
@@ -265,6 +269,19 @@ sub send_linear_fit {
   return $offset;
 }
 
+sub check_offset_file {
+  return if not defined($config{offset_file});
+
+  return if not -f $config{offset_file};
+
+  if(not open(OFFSETFILE, "<", $config{offset_file})) {
+    warn("unable to open $config{offset_file}: $!");
+    return;
+  }
+  $config{static_offset} = <OFFSETFILE> / 1000000;
+  close(OFFSETFILE);
+}
+
 my(@responses);
 sub process_response {
   my($ntpd,$response) = @_;
@@ -272,6 +289,7 @@ sub process_response {
   push(@responses, $response);
   if(@responses == $config{report_interval}) { # TODO: make this seconds based?
     linear_fit($ntpd,@responses);
+    check_offset_file();
     @responses = ();
   }
 }
